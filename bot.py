@@ -1,7 +1,7 @@
 import asyncio
 import random
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 import logging
 
@@ -9,12 +9,12 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # ========== НАСТРОЙКИ (ЗАМЕНИТЕ НА СВОИ) ==========
-BOT_TOKEN = "8071372461:AAE8RBJ8DwRfKf3ddTHz8zRjAL8YwB8B-bM"  # Токен бота от @BotFather
-ADMIN_IDS = [5356400377]  # ID администраторов (через запятую)
+BOT_TOKEN = "8071372461:AAE8RBJ8DwRfKf3ddTHz8zRjAL8YwB8B-bM"
+ADMIN_IDS = [5356400377]
 
 # ========== НАСТРОЙКА ЛОГИРОВАНИЯ ==========
 logging.basicConfig(level=logging.INFO)
@@ -24,8 +24,7 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# ========== БАЗА ДАННЫХ (JSON вместо SQLite) ==========
-import json
+# ========== БАЗА ДАННЫХ (JSON) ==========
 import os
 
 class Database:
@@ -122,7 +121,6 @@ class Database:
             return self.data['users'][user_id]['last_bonus_time']
         return 0
     
-    # Кейсы
     def get_cases(self):
         return self.data['cases']
     
@@ -135,13 +133,12 @@ class Database:
                 return case
         return None
     
-    def add_case(self, name, price, photo_url, description):
+    def add_case(self, name, price, description):
         case_id = self.data['next_case_id']
         self.data['cases'].append({
             'id': case_id,
             'name': name,
             'price': price,
-            'photo_url': photo_url,
             'description': description,
             'is_active': 1
         })
@@ -149,7 +146,6 @@ class Database:
         self.save_data()
         return case_id
     
-    # Предметы кейсов
     def get_case_items(self, case_id):
         return [item for item in self.data['case_items'] if item['case_id'] == case_id]
     
@@ -168,7 +164,6 @@ class Database:
         self.save_data()
         return item_id
     
-    # Инвентарь
     def add_to_inventory(self, user_id, item_name, item_value, item_emoji, rarity, from_case):
         inv_id = self.data['next_inventory_id']
         self.data['user_inventory'].append({
@@ -191,14 +186,6 @@ class Database:
     def get_all_user_items(self, user_id):
         return [item for item in self.data['user_inventory'] if item['user_id'] == user_id and item['is_sold'] == 0]
     
-    def sell_item(self, item_id):
-        for item in self.data['user_inventory']:
-            if item['id'] == item_id:
-                item['is_sold'] = 1
-                self.save_data()
-                return item['item_value']
-        return 0
-    
     def sell_all_items(self, user_id):
         total = 0
         for item in self.data['user_inventory']:
@@ -208,7 +195,6 @@ class Database:
         self.save_data()
         return total
     
-    # Настройки
     def get_setting(self, key):
         return self.data['settings'].get(key, '')
     
@@ -216,7 +202,6 @@ class Database:
         self.data['settings'][key] = value
         self.save_data()
     
-    # Каналы
     def get_channels(self):
         return self.data['required_channels']
     
@@ -228,7 +213,6 @@ class Database:
         })
         self.save_data()
     
-    # Статистика
     def get_total_users(self):
         return len(self.data['users'])
     
@@ -250,7 +234,6 @@ db = Database()
 class AdminStates(StatesGroup):
     waiting_for_case_name = State()
     waiting_for_case_price = State()
-    waiting_for_case_photo = State()
     waiting_for_case_desc = State()
     waiting_for_item_name = State()
     waiting_for_item_value = State()
@@ -325,10 +308,7 @@ def get_rarity_emoji(rarity: str) -> str:
     return rarities.get(rarity, "⬜")
 
 # ========== КРАСИВОЕ ОТКРЫТИЕ КЕЙСА ==========
-async def open_case_animation(callback: CallbackQuery, case_id: int, case_name: str, items: List[Dict]) -> Tuple[Dict, str]:
-    """Анимация открытия кейса с выбором предмета по шансу"""
-    
-    # Выбираем предмет по шансу
+async def open_case_animation(message, case_name: str, items: List[Dict]) -> Tuple[Dict, str]:
     total_chance = sum(item['chance'] for item in items)
     rand = random.uniform(0, total_chance)
     cumulative = 0
@@ -343,36 +323,31 @@ async def open_case_animation(callback: CallbackQuery, case_id: int, case_name: 
     if not selected_item:
         selected_item = items[0]
     
-    # Анимация: 3 этапа
     animation_frames = [
         "🎲 🎰 🎲",
         "✨ ⭐ ✨",
         "💫 🌟 💫"
     ]
     
-    msg = await callback.message.edit_text(
-        f"🎁 Открываем кейс **{case_name}**...\n\n"
-        f"{animation_frames[0]}",
+    msg = await message.answer(
+        f"🎁 Открываем кейс **{case_name}**...\n\n{animation_frames[0]}",
         parse_mode="Markdown"
     )
     
     await asyncio.sleep(0.5)
     await msg.edit_text(
-        f"🎁 Открываем кейс **{case_name}**...\n\n"
-        f"{animation_frames[1]}",
+        f"🎁 Открываем кейс **{case_name}**...\n\n{animation_frames[1]}",
         parse_mode="Markdown"
     )
     
     await asyncio.sleep(0.5)
     await msg.edit_text(
-        f"🎁 Открываем кейс **{case_name}**...\n\n"
-        f"{animation_frames[2]}",
+        f"🎁 Открываем кейс **{case_name}**...\n\n{animation_frames[2]}",
         parse_mode="Markdown"
     )
     
     await asyncio.sleep(0.5)
     
-    # Результат
     rarity_emoji = get_rarity_emoji(selected_item['rarity'])
     result_text = (
         f"🎉 **ВЫ ВЫИГРАЛИ!** 🎉\n\n"
@@ -386,8 +361,7 @@ async def open_case_animation(callback: CallbackQuery, case_id: int, case_name: 
 
 # ========== ИГРЫ ==========
 
-# ИГРА 1: СЛОТЫ
-async def play_slots(user_id: int, bet: float) -> Tuple[bool, float, str]:
+async def play_slots(bet: float) -> Tuple[bool, float, str]:
     symbols = ["🍒", "🍋", "🍊", "🍉", "⭐", "💎", "7️⃣", "🎰"]
     reel1 = random.choice(symbols)
     reel2 = random.choice(symbols)
@@ -421,8 +395,7 @@ async def play_slots(user_id: int, bet: float) -> Tuple[bool, float, str]:
         return True, win_amount, result_text
     return False, 0, result_text
 
-# ИГРА 2: КОСТИ
-async def play_dice(user_id: int, bet: float) -> Tuple[bool, float, str]:
+async def play_dice(bet: float) -> Tuple[bool, float, str]:
     user_roll = random.randint(1, 6)
     bot_roll = random.randint(1, 6)
     
@@ -439,8 +412,7 @@ async def play_dice(user_id: int, bet: float) -> Tuple[bool, float, str]:
         result_text += f"🤝 Ничья! Ставка возвращена"
         return True, bet, result_text
 
-# ИГРА 3: КАМЕНЬ-НОЖНИЦЫ-БУМАГА
-async def play_rps(user_id: int, bet: float, user_choice: str) -> Tuple[bool, float, str]:
+async def play_rps(bet: float, user_choice: str) -> Tuple[bool, float, str]:
     choices = {"камень": "🪨", "ножницы": "✂️", "бумага": "📄"}
     bot_choice = random.choice(["камень", "ножницы", "бумага"])
     
@@ -464,8 +436,7 @@ async def play_rps(user_id: int, bet: float, user_choice: str) -> Tuple[bool, fl
         result_text += f"😢 Вы проиграли! -{bet:.0f} {get_currency_name()}"
         return False, 0, result_text
 
-# ИГРА 4: УГАДАЙ ЧИСЛО
-async def play_number_guess(user_id: int, bet: float, guess: int) -> Tuple[bool, float, str]:
+async def play_number_guess(bet: float, guess: int) -> Tuple[bool, float, str]:
     secret = random.randint(1, 10)
     result_text = f"🔢 Ваше число: {guess}\n🎲 Загаданное число: {secret}\n\n"
     
@@ -481,8 +452,7 @@ async def play_number_guess(user_id: int, bet: float, guess: int) -> Tuple[bool,
         result_text += f"😢 Не угадали! -{bet:.0f} {get_currency_name()}"
         return False, 0, result_text
 
-# ИГРА 5: БЛЭКДЖЕК
-async def play_blackjack(user_id: int, bet: float, action: str = None, player_cards: List = None, dealer_cards: List = None):
+async def play_blackjack(bet: float, action: str = None, player_cards: List = None, dealer_cards: List = None):
     if player_cards is None:
         deck = [2,3,4,5,6,7,8,9,10,10,10,10,11] * 4
         random.shuffle(deck)
@@ -622,18 +592,17 @@ async def cmd_start(message: types.Message):
     db.add_user(user_id, username, first_name)
     add_to_inventory(user_id, "Приветственный бонус", 100, "🎁", "Особый", "Бонус")
     
-    await message.answer_photo(
-        photo="https://cdn.pixabay.com/photo/2017/12/10/15/07/case-3010188_640.png",
-        caption=f"🎉 Добро пожаловать, {first_name}!\n\n"
-                f"💰 Ваш баланс: {get_user_balance(user_id)} {get_currency_name()}\n\n"
-                f"Выберите действие:",
+    await message.answer(
+        f"🎉 Добро пожаловать, {first_name}!\n\n"
+        f"💰 Ваш баланс: {get_user_balance(user_id)} {get_currency_name()}\n\n"
+        f"Выберите действие:",
         reply_markup=main_keyboard(user_id)
     )
 
 @dp.callback_query(F.data == "back_to_main")
 async def back_to_main(callback: CallbackQuery):
-    await callback.message.edit_caption(
-        caption=f"💰 Ваш баланс: {get_user_balance(callback.from_user.id)} {get_currency_name()}\n\nГлавное меню:",
+    await callback.message.edit_text(
+        f"💰 Ваш баланс: {get_user_balance(callback.from_user.id)} {get_currency_name()}\n\nГлавное меню:",
         reply_markup=main_keyboard(callback.from_user.id)
     )
     await callback.answer()
@@ -645,14 +614,14 @@ async def show_balance(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "show_games")
 async def show_games(callback: CallbackQuery):
-    await callback.message.edit_caption(
-        caption="🎮 **ВЫБЕРИ ИГРУ** 🎮\n\n"
-                "🎰 **Слоты** - x1.5 до x10\n"
-                "🎲 **Кости** - кто больше выбросит\n"
-                "✂️ **Камень-ножницы-бумага** - классика\n"
-                "🔢 **Угадай число** - угадай от 1 до 10\n"
-                "🃏 **Блэкджек** - 21 очко\n\n"
-                "Выберите игру:",
+    await callback.message.edit_text(
+        "🎮 **ВЫБЕРИ ИГРУ** 🎮\n\n"
+        "🎰 **Слоты** - x1.5 до x10\n"
+        "🎲 **Кости** - кто больше выбросит\n"
+        "✂️ **Камень-ножницы-бумага** - классика\n"
+        "🔢 **Угадай число** - угадай от 1 до 10\n"
+        "🃏 **Блэкджек** - 21 очко\n\n"
+        "Выберите игру:",
         parse_mode="Markdown",
         reply_markup=games_keyboard()
     )
@@ -664,16 +633,16 @@ async def game_slots_start(callback: CallbackQuery, state: FSMContext):
     min_bet = float(get_setting('casino_min_bet'))
     max_bet = float(get_setting('casino_max_bet'))
     
-    await callback.message.edit_caption(
-        caption=f"🎰 **СЛОТЫ** 🎰\n\n"
-                f"Правила: выпадают 3 символа\n"
-                f"2 одинаковых - x1.5\n"
-                f"3 одинаковых - x3\n"
-                f"3 звезды - x5\n"
-                f"3 алмаза - x7\n"
-                f"3 семерки - x10 (ДЖЕКПОТ!)\n\n"
-                f"💰 Ставка от {min_bet:.0f} до {max_bet:.0f} {get_currency_name()}\n\n"
-                f"Введите сумму ставки:",
+    await callback.message.edit_text(
+        f"🎰 **СЛОТЫ** 🎰\n\n"
+        f"Правила: выпадают 3 символа\n"
+        f"2 одинаковых - x1.5\n"
+        f"3 одинаковых - x3\n"
+        f"3 звезды - x5\n"
+        f"3 алмаза - x7\n"
+        f"3 семерки - x10 (ДЖЕКПОТ!)\n\n"
+        f"💰 Ставка от {min_bet:.0f} до {max_bet:.0f} {get_currency_name()}\n\n"
+        f"Введите сумму ставки:",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="show_games")]])
     )
@@ -698,7 +667,7 @@ async def game_slots_play(message: types.Message, state: FSMContext):
         
         update_balance(message.from_user.id, -bet)
         
-        win, win_amount, result_text = await play_slots(message.from_user.id, bet)
+        win, win_amount, result_text = await play_slots(bet)
         
         if win:
             update_balance(message.from_user.id, win_amount)
@@ -727,13 +696,13 @@ async def game_dice_start(callback: CallbackQuery, state: FSMContext):
     min_bet = float(get_setting('casino_min_bet'))
     max_bet = float(get_setting('casino_max_bet'))
     
-    await callback.message.edit_caption(
-        caption=f"🎲 **КОСТИ** 🎲\n\n"
-                f"Правила: вы и бот бросаете кубик\n"
-                f"У кого больше - тот победил\n"
-                f"Выигрыш: x1.8 от ставки\n\n"
-                f"💰 Ставка от {min_bet:.0f} до {max_bet:.0f} {get_currency_name()}\n\n"
-                f"Введите сумму ставки:",
+    await callback.message.edit_text(
+        f"🎲 **КОСТИ** 🎲\n\n"
+        f"Правила: вы и бот бросаете кубик\n"
+        f"У кого больше - тот победил\n"
+        f"Выигрыш: x1.8 от ставки\n\n"
+        f"💰 Ставка от {min_bet:.0f} до {max_bet:.0f} {get_currency_name()}\n\n"
+        f"Введите сумму ставки:",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="show_games")]])
     )
@@ -758,7 +727,7 @@ async def game_dice_play(message: types.Message, state: FSMContext):
         
         update_balance(message.from_user.id, -bet)
         
-        win, win_amount, result_text = await play_dice(message.from_user.id, bet)
+        win, win_amount, result_text = await play_dice(bet)
         
         if win:
             update_balance(message.from_user.id, win_amount)
@@ -779,12 +748,12 @@ async def game_rps_start(callback: CallbackQuery, state: FSMContext):
     min_bet = float(get_setting('casino_min_bet'))
     max_bet = float(get_setting('casino_max_bet'))
     
-    await callback.message.edit_caption(
-        caption=f"✂️ **КАМЕНЬ-НОЖНИЦЫ-БУМАГА** ✂️\n\n"
-                f"Правила: выберите свой вариант\n"
-                f"Выигрыш: x1.9 от ставки\n\n"
-                f"💰 Ставка от {min_bet:.0f} до {max_bet:.0f} {get_currency_name()}\n\n"
-                f"Введите сумму ставки:",
+    await callback.message.edit_text(
+        f"✂️ **КАМЕНЬ-НОЖНИЦЫ-БУМАГА** ✂️\n\n"
+        f"Правила: выберите свой вариант\n"
+        f"Выигрыш: x1.9 от ставки\n\n"
+        f"💰 Ставка от {min_bet:.0f} до {max_bet:.0f} {get_currency_name()}\n\n"
+        f"Введите сумму ставки:",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="show_games")]])
     )
@@ -844,14 +813,14 @@ async def game_rps_play(callback: CallbackQuery, state: FSMContext):
     
     update_balance(callback.from_user.id, -bet)
     
-    win, win_amount, result_text = await play_rps(callback.from_user.id, bet, user_choice)
+    win, win_amount, result_text = await play_rps(bet, user_choice)
     
     if win:
         update_balance(callback.from_user.id, win_amount)
     
-    await callback.message.edit_caption(
-        caption=f"✂️ **РЕЗУЛЬТАТ** ✂️\n\n{result_text}\n\n"
-                f"💵 Новый баланс: {get_user_balance(callback.from_user.id)} {get_currency_name()}",
+    await callback.message.edit_text(
+        f"✂️ **РЕЗУЛЬТАТ** ✂️\n\n{result_text}\n\n"
+        f"💵 Новый баланс: {get_user_balance(callback.from_user.id)} {get_currency_name()}",
         parse_mode="Markdown",
         reply_markup=games_keyboard()
     )
@@ -863,13 +832,13 @@ async def game_number_start(callback: CallbackQuery, state: FSMContext):
     min_bet = float(get_setting('casino_min_bet'))
     max_bet = float(get_setting('casino_max_bet'))
     
-    await callback.message.edit_caption(
-        caption=f"🔢 **УГАДАЙ ЧИСЛО** 🔢\n\n"
-                f"Правила: угадайте число от 1 до 10\n"
-                f"Точное попадание - x3\n"
-                f"Отклонение до 2 - x1.5\n\n"
-                f"💰 Ставка от {min_bet:.0f} до {max_bet:.0f} {get_currency_name()}\n\n"
-                f"Введите сумму ставки:",
+    await callback.message.edit_text(
+        f"🔢 **УГАДАЙ ЧИСЛО** 🔢\n\n"
+        f"Правила: угадайте число от 1 до 10\n"
+        f"Точное попадание - x3\n"
+        f"Отклонение до 2 - x1.5\n\n"
+        f"💰 Ставка от {min_bet:.0f} до {max_bet:.0f} {get_currency_name()}\n\n"
+        f"Введите сумму ставки:",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="show_games")]])
     )
@@ -917,7 +886,7 @@ async def game_number_play(message: types.Message, state: FSMContext):
         
         update_balance(message.from_user.id, -bet)
         
-        win, win_amount, result_text = await play_number_guess(message.from_user.id, bet, guess)
+        win, win_amount, result_text = await play_number_guess(bet, guess)
         
         if win:
             update_balance(message.from_user.id, win_amount)
@@ -938,13 +907,13 @@ async def game_blackjack_start(callback: CallbackQuery, state: FSMContext):
     min_bet = float(get_setting('casino_min_bet'))
     max_bet = float(get_setting('casino_max_bet'))
     
-    await callback.message.edit_caption(
-        caption=f"🃏 **БЛЭКДЖЕК** 🃏\n\n"
-                f"Правила: наберите 21 очко или ближе к нему\n"
-                f"Перебор - проигрыш\n"
-                f"Победа - x2 от ставки\n\n"
-                f"💰 Ставка от {min_bet:.0f} до {max_bet:.0f} {get_currency_name()}\n\n"
-                f"Введите сумму ставки:",
+    await callback.message.edit_text(
+        f"🃏 **БЛЭКДЖЕК** 🃏\n\n"
+        f"Правила: наберите 21 очко или ближе к нему\n"
+        f"Перебор - проигрыш\n"
+        f"Победа - x2 от ставки\n\n"
+        f"💰 Ставка от {min_bet:.0f} до {max_bet:.0f} {get_currency_name()}\n\n"
+        f"Введите сумму ставки:",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="show_games")]])
     )
@@ -969,7 +938,7 @@ async def game_blackjack_bet(message: types.Message, state: FSMContext):
         
         update_balance(message.from_user.id, -bet)
         
-        result = await play_blackjack(message.from_user.id, bet)
+        result = await play_blackjack(bet)
         win, win_amount, result_text, player_cards, dealer_cards = result
         
         await state.update_data(blackjack_bet=bet, player_cards=player_cards, dealer_cards=dealer_cards)
@@ -993,13 +962,13 @@ async def game_blackjack_action(callback: CallbackQuery, state: FSMContext):
     
     action = "hit" if callback.data == "bj_hit" else "stand"
     
-    result = await play_blackjack(callback.from_user.id, bet, action, player_cards, dealer_cards)
+    result = await play_blackjack(bet, action, player_cards, dealer_cards)
     win, win_amount, result_text, new_player_cards, new_dealer_cards = result
     
     if win is None:
         await state.update_data(player_cards=new_player_cards, dealer_cards=new_dealer_cards)
-        await callback.message.edit_caption(
-            caption=result_text,
+        await callback.message.edit_text(
+            result_text,
             parse_mode="Markdown",
             reply_markup=blackjack_keyboard()
         )
@@ -1007,9 +976,9 @@ async def game_blackjack_action(callback: CallbackQuery, state: FSMContext):
         if win and win_amount > 0:
             update_balance(callback.from_user.id, win_amount)
         
-        await callback.message.edit_caption(
-            caption=f"🃏 **РЕЗУЛЬТАТ** 🃏\n\n{result_text}\n\n"
-                    f"💵 Новый баланс: {get_user_balance(callback.from_user.id)} {get_currency_name()}",
+        await callback.message.edit_text(
+            f"🃏 **РЕЗУЛЬТАТ** 🃏\n\n{result_text}\n\n"
+            f"💵 Новый баланс: {get_user_balance(callback.from_user.id)} {get_currency_name()}",
             parse_mode="Markdown",
             reply_markup=games_keyboard()
         )
@@ -1021,17 +990,17 @@ async def game_blackjack_action(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "show_cases")
 async def show_cases_list(callback: CallbackQuery):
     if not await check_subscriptions(callback.from_user.id):
-        await callback.message.edit_caption(
-            caption="❌ Для открытия кейсов необходимо подписаться на наши каналы!",
+        await callback.message.edit_text(
+            "❌ Для открытия кейсов необходимо подписаться на наши каналы!",
             reply_markup=get_subscription_keyboard()
         )
         await callback.answer()
         return
     
-    await callback.message.edit_caption(
-        caption="🎁 **ВЫБЕРИ КЕЙС** 🎁\n\n"
-                "Каждый кейс содержит уникальные предметы!\n"
-                "Чем дороже кейс - тем ценнее предметы!",
+    await callback.message.edit_text(
+        "🎁 **ВЫБЕРИ КЕЙС** 🎁\n\n"
+        "Каждый кейс содержит уникальные предметы!\n"
+        "Чем дороже кейс - тем ценнее предметы!",
         parse_mode="Markdown",
         reply_markup=cases_keyboard()
     )
@@ -1052,7 +1021,6 @@ async def open_case_handler(callback: CallbackQuery):
     
     case_name = case['name']
     price = case['price']
-    photo_url = case.get('photo_url', '')
     
     balance = get_user_balance(callback.from_user.id)
     if balance < price:
@@ -1069,7 +1037,7 @@ async def open_case_handler(callback: CallbackQuery):
         await callback.answer("❌ В кейсе нет предметов!", show_alert=True)
         return
     
-    selected_item, result_text = await open_case_animation(callback, case_id, case_name, items_list)
+    selected_item, result_text = await open_case_animation(callback.message, case_name, items_list)
     
     add_to_inventory(
         callback.from_user.id, 
@@ -1082,17 +1050,11 @@ async def open_case_handler(callback: CallbackQuery):
     
     db.update_user_stats(callback.from_user.id, price, 1)
     
-    if photo_url:
-        await callback.message.edit_media(
-            media=InputMediaPhoto(media=photo_url, caption=result_text),
-            reply_markup=cases_keyboard()
-        )
-    else:
-        await callback.message.edit_caption(
-            caption=result_text,
-            parse_mode="Markdown",
-            reply_markup=cases_keyboard()
-        )
+    await callback.message.edit_text(
+        result_text,
+        parse_mode="Markdown",
+        reply_markup=cases_keyboard()
+    )
     
     await callback.answer(f"🎉 Вы выиграли {selected_item['item_name']}!")
 
@@ -1154,8 +1116,8 @@ async def show_inventory(callback: CallbackQuery):
     builder.button(text="💰 Продать всё", callback_data="sell_all")
     builder.button(text="🔙 Назад", callback_data="back_to_main")
     
-    await callback.message.edit_caption(
-        caption=text,
+    await callback.message.edit_text(
+        text,
         parse_mode="Markdown",
         reply_markup=builder.as_markup()
     )
@@ -1166,11 +1128,11 @@ async def show_resell(callback: CallbackQuery):
     items = db.get_user_inventory(callback.from_user.id)
     count = len(items)
     
-    await callback.message.edit_caption(
-        caption="🔄 **СКУПКА ПРЕДМЕТОВ** 🔄\n\n"
-                f"📦 У вас {count} предметов в инвентаре\n\n"
-                "💰 Вы можете продать все предметы по их полной стоимости!\n\n"
-                "Продажа: нажмите кнопку ниже",
+    await callback.message.edit_text(
+        "🔄 **СКУПКА ПРЕДМЕТОВ** 🔄\n\n"
+        f"📦 У вас {count} предметов в инвентаре\n\n"
+        "💰 Вы можете продать все предметы по их полной стоимости!\n\n"
+        "Продажа: нажмите кнопку ниже",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💰 Продать всё за раз", callback_data="sell_all")],
@@ -1191,10 +1153,10 @@ async def sell_all_items(callback: CallbackQuery):
     update_balance(callback.from_user.id, total)
     
     await callback.answer(f"✅ Продано на {total:.0f} {get_currency_name()}!", show_alert=True)
-    await callback.message.edit_caption(
-        caption=f"✅ **ПРОДАЖА ЗАВЕРШЕНА**\n\n"
-                f"💰 Выручено: {total:.0f} {get_currency_name()}\n"
-                f"💵 Новый баланс: {get_user_balance(callback.from_user.id)} {get_currency_name()}",
+    await callback.message.edit_text(
+        f"✅ **ПРОДАЖА ЗАВЕРШЕНА**\n\n"
+        f"💰 Выручено: {total:.0f} {get_currency_name()}\n"
+        f"💵 Новый баланс: {get_user_balance(callback.from_user.id)} {get_currency_name()}",
         parse_mode="Markdown",
         reply_markup=main_keyboard(callback.from_user.id)
     )
@@ -1214,8 +1176,8 @@ async def show_shop(callback: CallbackQuery):
     text += "\nПосле оплаты отправьте скриншот в поддержку\n"
     text += f"🆘 Поддержка: {get_setting('support_contact')}"
     
-    await callback.message.edit_caption(
-        caption=text,
+    await callback.message.edit_text(
+        text,
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")],
@@ -1227,11 +1189,11 @@ async def show_shop(callback: CallbackQuery):
 @dp.callback_query(F.data == "support")
 async def support(callback: CallbackQuery):
     support_contact = get_setting('support_contact')
-    await callback.message.edit_caption(
-        caption=f"🆘 **ПОДДЕРЖКА** 🆘\n\n"
-                f"По всем вопросам обращайтесь:\n"
-                f"{support_contact}\n\n"
-                f"Вопросы по оплате, проблемы с ботом, сотрудничество.",
+    await callback.message.edit_text(
+        f"🆘 **ПОДДЕРЖКА** 🆘\n\n"
+        f"По всем вопросам обращайтесь:\n"
+        f"{support_contact}\n\n"
+        f"Вопросы по оплате, проблемы с ботом, сотрудничество.",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
@@ -1242,8 +1204,8 @@ async def support(callback: CallbackQuery):
 @dp.callback_query(F.data == "check_sub")
 async def check_sub(callback: CallbackQuery):
     if await check_subscriptions(callback.from_user.id):
-        await callback.message.edit_caption(
-            caption="✅ Подписка подтверждена!\nВозвращаемся в меню...",
+        await callback.message.edit_text(
+            "✅ Подписка подтверждена!\nВозвращаемся в меню...",
             reply_markup=main_keyboard(callback.from_user.id)
         )
     else:
@@ -1256,8 +1218,8 @@ async def admin_panel(callback: CallbackQuery):
         await callback.answer("❌ Нет доступа!", show_alert=True)
         return
     
-    await callback.message.edit_caption(
-        caption="⚙️ **АДМИН ПАНЕЛЬ** ⚙️\n\nВыберите действие:",
+    await callback.message.edit_text(
+        "⚙️ **АДМИН ПАНЕЛЬ** ⚙️\n\nВыберите действие:",
         parse_mode="Markdown",
         reply_markup=admin_keyboard()
     )
@@ -1269,8 +1231,8 @@ async def admin_cases_menu(callback: CallbackQuery):
         await callback.answer("❌ Нет доступа!", show_alert=True)
         return
     
-    await callback.message.edit_caption(
-        caption="📦 **УПРАВЛЕНИЕ КЕЙСАМИ** 📦",
+    await callback.message.edit_text(
+        "📦 **УПРАВЛЕНИЕ КЕЙСАМИ** 📦",
         parse_mode="Markdown",
         reply_markup=admin_cases_keyboard()
     )
@@ -1297,33 +1259,17 @@ async def create_case_price(message: types.Message, state: FSMContext):
     try:
         price = float(message.text)
         await state.update_data(case_price=price)
-        await message.answer("🖼️ Отправьте фото для кейса (или напишите 'пропустить'):")
-        await state.set_state(AdminStates.waiting_for_case_photo)
+        await message.answer("📝 Введите описание кейса:")
+        await state.set_state(AdminStates.waiting_for_case_desc)
     except ValueError:
         await message.answer("❌ Введите число!")
-
-@dp.message(AdminStates.waiting_for_case_photo)
-async def create_case_photo(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    
-    if message.text and message.text.lower() == 'пропустить':
-        photo_url = ""
-    elif message.photo:
-        photo_url = message.photo[-1].file_id
-    else:
-        await message.answer("❌ Отправьте фото или напишите 'пропустить'")
-        return
-    
-    await state.update_data(case_photo=photo_url)
-    await message.answer("📝 Введите описание кейса:")
-    await state.set_state(AdminStates.waiting_for_case_desc)
 
 @dp.message(AdminStates.waiting_for_case_desc)
 async def create_case_desc(message: types.Message, state: FSMContext):
     await state.update_data(case_desc=message.text)
     data = await state.get_data()
     
-    case_id = db.add_case(data['case_name'], data['case_price'], data['case_photo'], data['case_desc'])
+    case_id = db.add_case(data['case_name'], data['case_price'], data['case_desc'])
     
     await state.update_data(current_case_id=case_id)
     await message.answer(
@@ -1430,8 +1376,8 @@ async def admin_list_cases(callback: CallbackQuery):
     for case in cases:
         text += f"ID: {case['id']} | {case['name']} - {case['price']} {get_currency_name()}\n"
     
-    await callback.message.edit_caption(
-        caption=text,
+    await callback.message.edit_text(
+        text,
         parse_mode="Markdown",
         reply_markup=admin_keyboard()
     )
@@ -1469,7 +1415,7 @@ async def send_broadcast(message: types.Message, state: FSMContext):
     await state.clear()
 
 @dp.callback_query(F.data == "admin_payment")
-async def admin_payment(callback: CallbackQuery, state: FSMContext):
+async def admin_payment(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("❌ Нет доступа!", show_alert=True)
         return
@@ -1479,8 +1425,8 @@ async def admin_payment(callback: CallbackQuery, state: FSMContext):
     builder.button(text="📱 Номер телефона", callback_data="admin_set_phone")
     builder.button(text="🔙 Назад", callback_data="admin_panel")
     
-    await callback.message.edit_caption(
-        caption="💳 **НАСТРОЙКА ОПЛАТЫ** 💳",
+    await callback.message.edit_text(
+        "💳 **НАСТРОЙКА ОПЛАТЫ** 💳",
         parse_mode="Markdown",
         reply_markup=builder.as_markup()
     )
@@ -1568,7 +1514,7 @@ async def admin_games(callback: CallbackQuery):
         "Пример: 10 1000"
     )
     
-    @dp.message(lambda m: m.text and m.text.replace(' ', '').replace('.', '').isdigit() or ' ' in m.text)
+    @dp.message(lambda m: m.text and (' ' in m.text))
     async def set_game_limits(msg: types.Message):
         try:
             parts = msg.text.split()
@@ -1602,8 +1548,8 @@ async def admin_channels(callback: CallbackQuery):
     else:
         text += "Нет обязательных подписок"
     
-    await callback.message.edit_caption(
-        caption=text,
+    await callback.message.edit_text(
+        text,
         parse_mode="Markdown",
         reply_markup=builder.as_markup()
     )
@@ -1611,7 +1557,7 @@ async def admin_channels(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "admin_add_channel")
 async def admin_add_channel(callback: CallbackQuery, state: FSMContext):
-    await callback.message.answer("📢 Введите ID канала (например: @channel или -100123456789):")
+    await callback.message.answer("📢 Введите ID канала (например: @channel):")
     await state.set_state(AdminStates.waiting_for_channel_id)
     await callback.answer()
 
@@ -1653,8 +1599,8 @@ async def admin_stats(callback: CallbackQuery):
     text += f"📦 Предметов в инвентаре: {total_items}\n"
     text += f"💎 Баланс пользователей: {total_balance:.0f} {get_currency_name()}"
     
-    await callback.message.edit_caption(
-        caption=text,
+    await callback.message.edit_text(
+        text,
         parse_mode="Markdown",
         reply_markup=admin_keyboard()
     )
