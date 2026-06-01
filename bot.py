@@ -1,7 +1,6 @@
 import asyncio
 import random
 import json
-import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import logging
@@ -15,7 +14,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # ========== НАСТРОЙКИ (ЗАМЕНИТЕ НА СВОИ) ==========
 BOT_TOKEN = "8071372461:AAE8RBJ8DwRfKf3ddTHz8zRjAL8YwB8B-bM"  # Токен бота от @BotFather
-ADMIN_IDS = [5356400377]  # ID администраторов
+ADMIN_IDS = [5356400377]  # ID администраторов (через запятую)
 
 # ========== НАСТРОЙКА ЛОГИРОВАНИЯ ==========
 logging.basicConfig(level=logging.INFO)
@@ -25,41 +24,33 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# ========== КЛАСС ДЛЯ РАБОТЫ С JSON ==========
-class JSONDatabase:
-    def __init__(self):
-        self.data_folder = "bot_data"
-        if not os.path.exists(self.data_folder):
-            os.makedirs(self.data_folder)
-        
-        self.users_file = os.path.join(self.data_folder, "users.json")
-        self.cases_file = os.path.join(self.data_folder, "cases.json")
-        self.settings_file = os.path.join(self.data_folder, "settings.json")
-        self.channels_file = os.path.join(self.data_folder, "channels.json")
-        
-        self.load_all_data()
+# ========== БАЗА ДАННЫХ (JSON вместо SQLite) ==========
+import json
+import os
+
+class Database:
+    def __init__(self, db_file="bot_data.json"):
+        self.db_file = db_file
+        self.data = self.load_data()
     
-    def load_all_data(self):
-        # Загрузка пользователей
-        if os.path.exists(self.users_file):
-            with open(self.users_file, 'r', encoding='utf-8') as f:
-                self.users = json.load(f)
+    def load_data(self):
+        if os.path.exists(self.db_file):
+            with open(self.db_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
         else:
-            self.users = {}
-        
-        # Загрузка кейсов
-        if os.path.exists(self.cases_file):
-            with open(self.cases_file, 'r', encoding='utf-8') as f:
-                self.cases = json.load(f)
-        else:
-            self.cases = {}
-        
-        # Загрузка настроек
-        if os.path.exists(self.settings_file):
-            with open(self.settings_file, 'r', encoding='utf-8') as f:
-                self.settings = json.load(f)
-        else:
-            self.settings = {
+            return self.init_data()
+    
+    def save_data(self):
+        with open(self.db_file, 'w', encoding='utf-8') as f:
+            json.dump(self.data, f, ensure_ascii=False, indent=2)
+    
+    def init_data(self):
+        data = {
+            'users': {},
+            'cases': [],
+            'case_items': [],
+            'user_inventory': [],
+            'settings': {
                 'currency_symbol': '💰',
                 'currency_name': 'монет',
                 'casino_min_bet': '10',
@@ -68,199 +59,192 @@ class JSONDatabase:
                 'payment_card': '',
                 'payment_phone': '',
                 'bonus_case_cooldown': '86400'
-            }
-            self.save_settings()
-        
-        # Загрузка каналов
-        if os.path.exists(self.channels_file):
-            with open(self.channels_file, 'r', encoding='utf-8') as f:
-                self.channels = json.load(f)
-        else:
-            self.channels = []
-    
-    def save_users(self):
-        with open(self.users_file, 'w', encoding='utf-8') as f:
-            json.dump(self.users, f, ensure_ascii=False, indent=2)
-    
-    def save_cases(self):
-        with open(self.cases_file, 'w', encoding='utf-8') as f:
-            json.dump(self.cases, f, ensure_ascii=False, indent=2)
-    
-    def save_settings(self):
-        with open(self.settings_file, 'w', encoding='utf-8') as f:
-            json.dump(self.settings, f, ensure_ascii=False, indent=2)
-    
-    def save_channels(self):
-        with open(self.channels_file, 'w', encoding='utf-8') as f:
-            json.dump(self.channels, f, ensure_ascii=False, indent=2)
-    
-    # Методы для пользователей
-    def get_user(self, user_id: int) -> dict:
-        user_id_str = str(user_id)
-        if user_id_str not in self.users:
-            return None
-        return self.users[user_id_str]
-    
-    def create_user(self, user_id: int, username: str, first_name: str):
-        user_id_str = str(user_id)
-        self.users[user_id_str] = {
-            'user_id': user_id,
-            'username': username,
-            'first_name': first_name,
-            'balance': 1000,
-            'total_spent': 0,
-            'total_opened': 0,
-            'last_bonus_time': 0,
-            'joined_date': int(datetime.now().timestamp()),
-            'games_played': 0,
-            'games_won': 0,
-            'inventory': []
+            },
+            'required_channels': [],
+            'next_case_id': 1,
+            'next_item_id': 1,
+            'next_inventory_id': 1
         }
-        self.save_users()
+        return data
     
-    def update_user_balance(self, user_id: int, amount: float):
-        user_id_str = str(user_id)
-        if user_id_str in self.users:
-            self.users[user_id_str]['balance'] += amount
-            self.save_users()
+    def get_users(self):
+        return self.data['users']
     
-    def get_user_balance(self, user_id: int) -> float:
-        user_id_str = str(user_id)
-        if user_id_str in self.users:
-            return self.users[user_id_str]['balance']
+    def get_user(self, user_id):
+        return self.data['users'].get(str(user_id))
+    
+    def add_user(self, user_id, username, first_name):
+        if str(user_id) not in self.data['users']:
+            self.data['users'][str(user_id)] = {
+                'user_id': user_id,
+                'username': username,
+                'first_name': first_name,
+                'balance': 1000,
+                'total_spent': 0,
+                'total_opened': 0,
+                'last_bonus_time': 0,
+                'joined_date': int(datetime.now().timestamp()),
+                'games_played': 0,
+                'games_won': 0
+            }
+            self.save_data()
+    
+    def update_user_balance(self, user_id, amount):
+        user_id = str(user_id)
+        if user_id in self.data['users']:
+            self.data['users'][user_id]['balance'] += amount
+            self.save_data()
+            return True
+        return False
+    
+    def get_user_balance(self, user_id):
+        user_id = str(user_id)
+        if user_id in self.data['users']:
+            return self.data['users'][user_id]['balance']
         return 1000
     
-    def add_to_inventory(self, user_id: int, item_name: str, item_value: float, item_emoji: str = "📦", rarity: str = "Обычный", from_case: str = ""):
-        user_id_str = str(user_id)
-        if user_id_str in self.users:
-            self.users[user_id_str]['inventory'].append({
-                'id': int(datetime.now().timestamp() * 1000) + random.randint(1, 1000),
-                'item_name': item_name,
-                'item_value': item_value,
-                'item_emoji': item_emoji,
-                'rarity': rarity,
-                'received_date': int(datetime.now().timestamp()),
-                'from_case': from_case,
-                'is_sold': False
-            })
-            self.save_users()
+    def update_user_stats(self, user_id, spent=0, opened=0):
+        user_id = str(user_id)
+        if user_id in self.data['users']:
+            self.data['users'][user_id]['total_spent'] += spent
+            self.data['users'][user_id]['total_opened'] += opened
+            self.save_data()
     
-    def get_user_inventory(self, user_id: int) -> list:
-        user_id_str = str(user_id)
-        if user_id_str in self.users:
-            return [item for item in self.users[user_id_str]['inventory'] if not item.get('is_sold', False)]
-        return []
+    def update_bonus_time(self, user_id):
+        user_id = str(user_id)
+        if user_id in self.data['users']:
+            self.data['users'][user_id]['last_bonus_time'] = int(datetime.now().timestamp())
+            self.save_data()
     
-    def sell_all_items(self, user_id: int) -> float:
-        user_id_str = str(user_id)
-        if user_id_str not in self.users:
-            return 0
-        
-        total = 0
-        for item in self.users[user_id_str]['inventory']:
-            if not item.get('is_sold', False):
-                total += item['item_value']
-                item['is_sold'] = True
-        
-        if total > 0:
-            self.users[user_id_str]['balance'] += total
-            self.save_users()
-        
-        return total
-    
-    def update_user_stats(self, user_id: int, spent: float = 0, opened: int = 0):
-        user_id_str = str(user_id)
-        if user_id_str in self.users:
-            if spent > 0:
-                self.users[user_id_str]['total_spent'] += spent
-            if opened > 0:
-                self.users[user_id_str]['total_opened'] += opened
-            self.save_users()
-    
-    def update_bonus_time(self, user_id: int):
-        user_id_str = str(user_id)
-        if user_id_str in self.users:
-            self.users[user_id_str]['last_bonus_time'] = int(datetime.now().timestamp())
-            self.save_users()
-    
-    def get_last_bonus_time(self, user_id: int) -> int:
-        user_id_str = str(user_id)
-        if user_id_str in self.users:
-            return self.users[user_id_str]['last_bonus_time']
+    def get_last_bonus_time(self, user_id):
+        user_id = str(user_id)
+        if user_id in self.data['users']:
+            return self.data['users'][user_id]['last_bonus_time']
         return 0
     
-    # Методы для кейсов
-    def get_all_cases(self) -> dict:
-        return self.cases
+    # Кейсы
+    def get_cases(self):
+        return self.data['cases']
     
-    def get_case(self, case_id: int) -> dict:
-        case_id_str = str(case_id)
-        return self.cases.get(case_id_str)
+    def get_active_cases(self):
+        return [c for c in self.data['cases'] if c.get('is_active', 1) == 1]
     
-    def create_case(self, name: str, price: float, photo_url: str, description: str) -> int:
-        case_id = max([int(i) for i in self.cases.keys()] + [0]) + 1
-        case_id_str = str(case_id)
-        self.cases[case_id_str] = {
+    def get_case(self, case_id):
+        for case in self.data['cases']:
+            if case['id'] == case_id:
+                return case
+        return None
+    
+    def add_case(self, name, price, photo_url, description):
+        case_id = self.data['next_case_id']
+        self.data['cases'].append({
             'id': case_id,
             'name': name,
             'price': price,
             'photo_url': photo_url,
             'description': description,
-            'is_active': True,
-            'items': []
-        }
-        self.save_cases()
+            'is_active': 1
+        })
+        self.data['next_case_id'] += 1
+        self.save_data()
         return case_id
     
-    def add_case_item(self, case_id: int, item_name: str, item_value: float, chance: float, rarity: str, emoji: str):
-        case_id_str = str(case_id)
-        if case_id_str in self.cases:
-            self.cases[case_id_str]['items'].append({
-                'item_name': item_name,
-                'item_value': item_value,
-                'chance': chance,
-                'rarity': rarity,
-                'emoji': emoji
-            })
-            self.save_cases()
+    # Предметы кейсов
+    def get_case_items(self, case_id):
+        return [item for item in self.data['case_items'] if item['case_id'] == case_id]
     
-    # Методы для настроек
-    def get_setting(self, key: str) -> str:
-        return self.settings.get(key, '')
+    def add_case_item(self, case_id, item_name, item_value, chance, rarity, emoji):
+        item_id = self.data['next_item_id']
+        self.data['case_items'].append({
+            'id': item_id,
+            'case_id': case_id,
+            'item_name': item_name,
+            'item_value': item_value,
+            'chance': chance,
+            'rarity': rarity,
+            'emoji': emoji
+        })
+        self.data['next_item_id'] += 1
+        self.save_data()
+        return item_id
     
-    def set_setting(self, key: str, value: str):
-        self.settings[key] = value
-        self.save_settings()
+    # Инвентарь
+    def add_to_inventory(self, user_id, item_name, item_value, item_emoji, rarity, from_case):
+        inv_id = self.data['next_inventory_id']
+        self.data['user_inventory'].append({
+            'id': inv_id,
+            'user_id': user_id,
+            'item_name': item_name,
+            'item_value': item_value,
+            'item_emoji': item_emoji,
+            'rarity': rarity,
+            'received_date': int(datetime.now().timestamp()),
+            'is_sold': 0,
+            'from_case': from_case
+        })
+        self.data['next_inventory_id'] += 1
+        self.save_data()
     
-    # Методы для каналов
-    def get_channels(self) -> list:
-        return self.channels
+    def get_user_inventory(self, user_id):
+        return [item for item in self.data['user_inventory'] if item['user_id'] == user_id and item['is_sold'] == 0]
     
-    def add_channel(self, channel_id: str, channel_name: str, channel_url: str):
-        self.channels.append({
+    def get_all_user_items(self, user_id):
+        return [item for item in self.data['user_inventory'] if item['user_id'] == user_id and item['is_sold'] == 0]
+    
+    def sell_item(self, item_id):
+        for item in self.data['user_inventory']:
+            if item['id'] == item_id:
+                item['is_sold'] = 1
+                self.save_data()
+                return item['item_value']
+        return 0
+    
+    def sell_all_items(self, user_id):
+        total = 0
+        for item in self.data['user_inventory']:
+            if item['user_id'] == user_id and item['is_sold'] == 0:
+                total += item['item_value']
+                item['is_sold'] = 1
+        self.save_data()
+        return total
+    
+    # Настройки
+    def get_setting(self, key):
+        return self.data['settings'].get(key, '')
+    
+    def set_setting(self, key, value):
+        self.data['settings'][key] = value
+        self.save_data()
+    
+    # Каналы
+    def get_channels(self):
+        return self.data['required_channels']
+    
+    def add_channel(self, channel_id, channel_name, channel_url):
+        self.data['required_channels'].append({
             'channel_id': channel_id,
             'channel_name': channel_name,
             'channel_url': channel_url
         })
-        self.save_channels()
+        self.save_data()
     
     # Статистика
-    def get_stats(self) -> dict:
-        total_users = len(self.users)
-        total_spent = sum(u.get('total_spent', 0) for u in self.users.values())
-        total_opened = sum(u.get('total_opened', 0) for u in self.users.values())
-        total_balance = sum(u.get('balance', 0) for u in self.users.values())
-        total_items = sum(len([i for i in u.get('inventory', []) if not i.get('is_sold', False)]) for u in self.users.values())
-        
-        return {
-            'total_users': total_users,
-            'total_spent': total_spent,
-            'total_opened': total_opened,
-            'total_balance': total_balance,
-            'total_items': total_items
-        }
+    def get_total_users(self):
+        return len(self.data['users'])
+    
+    def get_total_spent(self):
+        return sum(user['total_spent'] for user in self.data['users'].values())
+    
+    def get_total_opened(self):
+        return sum(user['total_opened'] for user in self.data['users'].values())
+    
+    def get_total_items(self):
+        return len([item for item in self.data['user_inventory'] if item['is_sold'] == 0])
+    
+    def get_total_balance(self):
+        return sum(user['balance'] for user in self.data['users'].values())
 
-db = JSONDatabase()
+db = Database()
 
 # ========== СОСТОЯНИЯ ДЛЯ FSM ==========
 class AdminStates(StatesGroup):
@@ -293,11 +277,23 @@ class GameStates(StatesGroup):
     waiting_for_blackjack_action = State()
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+def get_user_balance(user_id: int) -> float:
+    return db.get_user_balance(user_id)
+
+def update_balance(user_id: int, amount: float):
+    db.update_user_balance(user_id, amount)
+
+def add_to_inventory(user_id: int, item_name: str, item_value: float, item_emoji: str = "📦", rarity: str = "Обычный", from_case: str = ""):
+    db.add_to_inventory(user_id, item_name, item_value, item_emoji, rarity, from_case)
+
 def get_currency() -> str:
     return db.get_setting('currency_symbol')
 
 def get_currency_name() -> str:
     return db.get_setting('currency_name')
+
+def get_setting(key: str) -> str:
+    return db.get_setting(key)
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -329,7 +325,10 @@ def get_rarity_emoji(rarity: str) -> str:
     return rarities.get(rarity, "⬜")
 
 # ========== КРАСИВОЕ ОТКРЫТИЕ КЕЙСА ==========
-async def open_case_animation(message, case_name: str, items: List[Dict]) -> Tuple[Dict, str]:
+async def open_case_animation(callback: CallbackQuery, case_id: int, case_name: str, items: List[Dict]) -> Tuple[Dict, str]:
+    """Анимация открытия кейса с выбором предмета по шансу"""
+    
+    # Выбираем предмет по шансу
     total_chance = sum(item['chance'] for item in items)
     rand = random.uniform(0, total_chance)
     cumulative = 0
@@ -344,15 +343,36 @@ async def open_case_animation(message, case_name: str, items: List[Dict]) -> Tup
     if not selected_item:
         selected_item = items[0]
     
-    frames = ["🎲 🎰 🎲", "✨ ⭐ ✨", "💫 🌟 💫"]
+    # Анимация: 3 этапа
+    animation_frames = [
+        "🎲 🎰 🎲",
+        "✨ ⭐ ✨",
+        "💫 🌟 💫"
+    ]
     
-    for frame in frames:
-        await message.edit_text(
-            f"🎁 Открываем кейс **{case_name}**...\n\n{frame}",
-            parse_mode="Markdown"
-        )
-        await asyncio.sleep(0.5)
+    msg = await callback.message.edit_text(
+        f"🎁 Открываем кейс **{case_name}**...\n\n"
+        f"{animation_frames[0]}",
+        parse_mode="Markdown"
+    )
     
+    await asyncio.sleep(0.5)
+    await msg.edit_text(
+        f"🎁 Открываем кейс **{case_name}**...\n\n"
+        f"{animation_frames[1]}",
+        parse_mode="Markdown"
+    )
+    
+    await asyncio.sleep(0.5)
+    await msg.edit_text(
+        f"🎁 Открываем кейс **{case_name}**...\n\n"
+        f"{animation_frames[2]}",
+        parse_mode="Markdown"
+    )
+    
+    await asyncio.sleep(0.5)
+    
+    # Результат
     rarity_emoji = get_rarity_emoji(selected_item['rarity'])
     result_text = (
         f"🎉 **ВЫ ВЫИГРАЛИ!** 🎉\n\n"
@@ -367,7 +387,7 @@ async def open_case_animation(message, case_name: str, items: List[Dict]) -> Tup
 # ========== ИГРЫ ==========
 
 # ИГРА 1: СЛОТЫ
-async def play_slots(bet: float) -> Tuple[bool, float, str]:
+async def play_slots(user_id: int, bet: float) -> Tuple[bool, float, str]:
     symbols = ["🍒", "🍋", "🍊", "🍉", "⭐", "💎", "7️⃣", "🎰"]
     reel1 = random.choice(symbols)
     reel2 = random.choice(symbols)
@@ -402,7 +422,7 @@ async def play_slots(bet: float) -> Tuple[bool, float, str]:
     return False, 0, result_text
 
 # ИГРА 2: КОСТИ
-async def play_dice(bet: float) -> Tuple[bool, float, str]:
+async def play_dice(user_id: int, bet: float) -> Tuple[bool, float, str]:
     user_roll = random.randint(1, 6)
     bot_roll = random.randint(1, 6)
     
@@ -420,11 +440,11 @@ async def play_dice(bet: float) -> Tuple[bool, float, str]:
         return True, bet, result_text
 
 # ИГРА 3: КАМЕНЬ-НОЖНИЦЫ-БУМАГА
-async def play_rps(bet: float, user_choice: str) -> Tuple[bool, float, str]:
-    choices_emoji = {"камень": "🪨", "ножницы": "✂️", "бумага": "📄"}
+async def play_rps(user_id: int, bet: float, user_choice: str) -> Tuple[bool, float, str]:
+    choices = {"камень": "🪨", "ножницы": "✂️", "бумага": "📄"}
     bot_choice = random.choice(["камень", "ножницы", "бумага"])
     
-    result_text = f"Вы: {choices_emoji[user_choice]} | Бот: {choices_emoji[bot_choice]}\n\n"
+    result_text = f"Вы: {choices[user_choice]} | Бот: {choices[bot_choice]}\n\n"
     
     if user_choice == bot_choice:
         result_text += "🤝 Ничья! Ставка возвращена"
@@ -445,7 +465,7 @@ async def play_rps(bet: float, user_choice: str) -> Tuple[bool, float, str]:
         return False, 0, result_text
 
 # ИГРА 4: УГАДАЙ ЧИСЛО
-async def play_number_guess(bet: float, guess: int) -> Tuple[bool, float, str]:
+async def play_number_guess(user_id: int, bet: float, guess: int) -> Tuple[bool, float, str]:
     secret = random.randint(1, 10)
     result_text = f"🔢 Ваше число: {guess}\n🎲 Загаданное число: {secret}\n\n"
     
@@ -462,7 +482,7 @@ async def play_number_guess(bet: float, guess: int) -> Tuple[bool, float, str]:
         return False, 0, result_text
 
 # ИГРА 5: БЛЭКДЖЕК
-async def play_blackjack(bet: float, action: str = None, player_cards: List = None, dealer_cards: List = None):
+async def play_blackjack(user_id: int, bet: float, action: str = None, player_cards: List = None, dealer_cards: List = None):
     if player_cards is None:
         deck = [2,3,4,5,6,7,8,9,10,10,10,10,11] * 4
         random.shuffle(deck)
@@ -547,10 +567,9 @@ def games_keyboard() -> InlineKeyboardMarkup:
 
 def cases_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    cases = db.get_all_cases()
-    for case_id, case_data in cases.items():
-        if case_data.get('is_active', True):
-            builder.button(text=f"📦 {case_data['name']} | {case_data['price']}{get_currency()}", callback_data=f"case_{case_id}")
+    cases = db.get_active_cases()
+    for case in cases:
+        builder.button(text=f"📦 {case['name']} | {case['price']}{get_currency()}", callback_data=f"case_{case['id']}")
     builder.button(text="🔙 Назад", callback_data="back_to_main")
     builder.adjust(1)
     return builder.as_markup()
@@ -587,10 +606,8 @@ def get_subscription_keyboard():
     builder = InlineKeyboardBuilder()
     channels = db.get_channels()
     for channel in channels:
-        if channel.get('channel_url'):
+        if channel['channel_url']:
             builder.button(text=f"📢 {channel['channel_name']}", url=channel['channel_url'])
-        else:
-            builder.button(text=f"📢 {channel['channel_name']}", callback_data="null")
     builder.button(text="✅ Проверить подписку", callback_data="check_sub")
     builder.button(text="🔙 Назад", callback_data="back_to_main")
     return builder.as_markup()
@@ -602,14 +619,13 @@ async def cmd_start(message: types.Message):
     username = message.from_user.username or "No username"
     first_name = message.from_user.first_name or "No name"
     
-    if not db.get_user(user_id):
-        db.create_user(user_id, username, first_name)
-        db.add_to_inventory(user_id, "Приветственный бонус", 100, "🎁", "Особый", "Бонус")
+    db.add_user(user_id, username, first_name)
+    add_to_inventory(user_id, "Приветственный бонус", 100, "🎁", "Особый", "Бонус")
     
     await message.answer_photo(
         photo="https://cdn.pixabay.com/photo/2017/12/10/15/07/case-3010188_640.png",
         caption=f"🎉 Добро пожаловать, {first_name}!\n\n"
-                f"💰 Ваш баланс: {db.get_user_balance(user_id)} {get_currency_name()}\n\n"
+                f"💰 Ваш баланс: {get_user_balance(user_id)} {get_currency_name()}\n\n"
                 f"Выберите действие:",
         reply_markup=main_keyboard(user_id)
     )
@@ -617,14 +633,14 @@ async def cmd_start(message: types.Message):
 @dp.callback_query(F.data == "back_to_main")
 async def back_to_main(callback: CallbackQuery):
     await callback.message.edit_caption(
-        caption=f"💰 Ваш баланс: {db.get_user_balance(callback.from_user.id)} {get_currency_name()}\n\nГлавное меню:",
+        caption=f"💰 Ваш баланс: {get_user_balance(callback.from_user.id)} {get_currency_name()}\n\nГлавное меню:",
         reply_markup=main_keyboard(callback.from_user.id)
     )
     await callback.answer()
 
 @dp.callback_query(F.data == "show_balance")
 async def show_balance(callback: CallbackQuery):
-    balance = db.get_user_balance(callback.from_user.id)
+    balance = get_user_balance(callback.from_user.id)
     await callback.answer(f"💰 Ваш баланс: {balance} {get_currency_name()}", show_alert=True)
 
 @dp.callback_query(F.data == "show_games")
@@ -645,8 +661,8 @@ async def show_games(callback: CallbackQuery):
 # ========== ИГРЫ ОБРАБОТЧИКИ ==========
 @dp.callback_query(F.data == "game_slots")
 async def game_slots_start(callback: CallbackQuery, state: FSMContext):
-    min_bet = float(db.get_setting('casino_min_bet'))
-    max_bet = float(db.get_setting('casino_max_bet'))
+    min_bet = float(get_setting('casino_min_bet'))
+    max_bet = float(get_setting('casino_max_bet'))
     
     await callback.message.edit_caption(
         caption=f"🎰 **СЛОТЫ** 🎰\n\n"
@@ -668,35 +684,35 @@ async def game_slots_start(callback: CallbackQuery, state: FSMContext):
 async def game_slots_play(message: types.Message, state: FSMContext):
     try:
         bet = float(message.text)
-        min_bet = float(db.get_setting('casino_min_bet'))
-        max_bet = float(db.get_setting('casino_max_bet'))
+        min_bet = float(get_setting('casino_min_bet'))
+        max_bet = float(get_setting('casino_max_bet'))
         
         if bet < min_bet or bet > max_bet:
             await message.answer(f"❌ Ставка должна быть от {min_bet:.0f} до {max_bet:.0f} {get_currency_name()}")
             return
         
-        balance = db.get_user_balance(message.from_user.id)
+        balance = get_user_balance(message.from_user.id)
         if balance < bet:
             await message.answer(f"❌ Недостаточно средств! Ваш баланс: {balance} {get_currency_name()}")
             return
         
-        db.update_user_balance(message.from_user.id, -bet)
+        update_balance(message.from_user.id, -bet)
         
-        win, win_amount, result_text = await play_slots(bet)
+        win, win_amount, result_text = await play_slots(message.from_user.id, bet)
         
         if win:
-            db.update_user_balance(message.from_user.id, win_amount)
+            update_balance(message.from_user.id, win_amount)
             await message.answer(
                 f"🎰 **РЕЗУЛЬТАТ** 🎰\n\n{result_text}\n\n"
                 f"💰 Выигрыш: +{win_amount:.0f} {get_currency_name()}\n"
-                f"💵 Новый баланс: {db.get_user_balance(message.from_user.id)} {get_currency_name()}",
+                f"💵 Новый баланс: {get_user_balance(message.from_user.id)} {get_currency_name()}",
                 parse_mode="Markdown",
                 reply_markup=games_keyboard()
             )
         else:
             await message.answer(
                 f"🎰 **РЕЗУЛЬТАТ** 🎰\n\n{result_text}\n\n"
-                f"💵 Новый баланс: {db.get_user_balance(message.from_user.id)} {get_currency_name()}",
+                f"💵 Новый баланс: {get_user_balance(message.from_user.id)} {get_currency_name()}",
                 parse_mode="Markdown",
                 reply_markup=games_keyboard()
             )
@@ -708,8 +724,8 @@ async def game_slots_play(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data == "game_dice")
 async def game_dice_start(callback: CallbackQuery, state: FSMContext):
-    min_bet = float(db.get_setting('casino_min_bet'))
-    max_bet = float(db.get_setting('casino_max_bet'))
+    min_bet = float(get_setting('casino_min_bet'))
+    max_bet = float(get_setting('casino_max_bet'))
     
     await callback.message.edit_caption(
         caption=f"🎲 **КОСТИ** 🎲\n\n"
@@ -728,28 +744,28 @@ async def game_dice_start(callback: CallbackQuery, state: FSMContext):
 async def game_dice_play(message: types.Message, state: FSMContext):
     try:
         bet = float(message.text)
-        min_bet = float(db.get_setting('casino_min_bet'))
-        max_bet = float(db.get_setting('casino_max_bet'))
+        min_bet = float(get_setting('casino_min_bet'))
+        max_bet = float(get_setting('casino_max_bet'))
         
         if bet < min_bet or bet > max_bet:
             await message.answer(f"❌ Ставка должна быть от {min_bet:.0f} до {max_bet:.0f} {get_currency_name()}")
             return
         
-        balance = db.get_user_balance(message.from_user.id)
+        balance = get_user_balance(message.from_user.id)
         if balance < bet:
             await message.answer(f"❌ Недостаточно средств! Ваш баланс: {balance} {get_currency_name()}")
             return
         
-        db.update_user_balance(message.from_user.id, -bet)
+        update_balance(message.from_user.id, -bet)
         
-        win, win_amount, result_text = await play_dice(bet)
+        win, win_amount, result_text = await play_dice(message.from_user.id, bet)
         
         if win:
-            db.update_user_balance(message.from_user.id, win_amount)
+            update_balance(message.from_user.id, win_amount)
         
         await message.answer(
             f"🎲 **РЕЗУЛЬТАТ** 🎲\n\n{result_text}\n\n"
-            f"💵 Новый баланс: {db.get_user_balance(message.from_user.id)} {get_currency_name()}",
+            f"💵 Новый баланс: {get_user_balance(message.from_user.id)} {get_currency_name()}",
             parse_mode="Markdown",
             reply_markup=games_keyboard()
         )
@@ -760,8 +776,8 @@ async def game_dice_play(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data == "game_rps")
 async def game_rps_start(callback: CallbackQuery, state: FSMContext):
-    min_bet = float(db.get_setting('casino_min_bet'))
-    max_bet = float(db.get_setting('casino_max_bet'))
+    min_bet = float(get_setting('casino_min_bet'))
+    max_bet = float(get_setting('casino_max_bet'))
     
     await callback.message.edit_caption(
         caption=f"✂️ **КАМЕНЬ-НОЖНИЦЫ-БУМАГА** ✂️\n\n"
@@ -779,14 +795,14 @@ async def game_rps_start(callback: CallbackQuery, state: FSMContext):
 async def game_rps_bet(message: types.Message, state: FSMContext):
     try:
         bet = float(message.text)
-        min_bet = float(db.get_setting('casino_min_bet'))
-        max_bet = float(db.get_setting('casino_max_bet'))
+        min_bet = float(get_setting('casino_min_bet'))
+        max_bet = float(get_setting('casino_max_bet'))
         
         if bet < min_bet or bet > max_bet:
             await message.answer(f"❌ Ставка должна быть от {min_bet:.0f} до {max_bet:.0f} {get_currency_name()}")
             return
         
-        balance = db.get_user_balance(message.from_user.id)
+        balance = get_user_balance(message.from_user.id)
         if balance < bet:
             await message.answer(f"❌ Недостаточно средств! Ваш баланс: {balance} {get_currency_name()}")
             return
@@ -826,16 +842,16 @@ async def game_rps_play(callback: CallbackQuery, state: FSMContext):
     if not user_choice:
         return
     
-    db.update_user_balance(callback.from_user.id, -bet)
+    update_balance(callback.from_user.id, -bet)
     
-    win, win_amount, result_text = await play_rps(bet, user_choice)
+    win, win_amount, result_text = await play_rps(callback.from_user.id, bet, user_choice)
     
     if win:
-        db.update_user_balance(callback.from_user.id, win_amount)
+        update_balance(callback.from_user.id, win_amount)
     
     await callback.message.edit_caption(
         caption=f"✂️ **РЕЗУЛЬТАТ** ✂️\n\n{result_text}\n\n"
-                f"💵 Новый баланс: {db.get_user_balance(callback.from_user.id)} {get_currency_name()}",
+                f"💵 Новый баланс: {get_user_balance(callback.from_user.id)} {get_currency_name()}",
         parse_mode="Markdown",
         reply_markup=games_keyboard()
     )
@@ -844,8 +860,8 @@ async def game_rps_play(callback: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "game_number")
 async def game_number_start(callback: CallbackQuery, state: FSMContext):
-    min_bet = float(db.get_setting('casino_min_bet'))
-    max_bet = float(db.get_setting('casino_max_bet'))
+    min_bet = float(get_setting('casino_min_bet'))
+    max_bet = float(get_setting('casino_max_bet'))
     
     await callback.message.edit_caption(
         caption=f"🔢 **УГАДАЙ ЧИСЛО** 🔢\n\n"
@@ -864,14 +880,14 @@ async def game_number_start(callback: CallbackQuery, state: FSMContext):
 async def game_number_bet(message: types.Message, state: FSMContext):
     try:
         bet = float(message.text)
-        min_bet = float(db.get_setting('casino_min_bet'))
-        max_bet = float(db.get_setting('casino_max_bet'))
+        min_bet = float(get_setting('casino_min_bet'))
+        max_bet = float(get_setting('casino_max_bet'))
         
         if bet < min_bet or bet > max_bet:
             await message.answer(f"❌ Ставка должна быть от {min_bet:.0f} до {max_bet:.0f} {get_currency_name()}")
             return
         
-        balance = db.get_user_balance(message.from_user.id)
+        balance = get_user_balance(message.from_user.id)
         if balance < bet:
             await message.answer(f"❌ Недостаточно средств! Ваш баланс: {balance} {get_currency_name()}")
             return
@@ -899,16 +915,16 @@ async def game_number_play(message: types.Message, state: FSMContext):
         data = await state.get_data()
         bet = data.get('number_bet', 0)
         
-        db.update_user_balance(message.from_user.id, -bet)
+        update_balance(message.from_user.id, -bet)
         
-        win, win_amount, result_text = await play_number_guess(bet, guess)
+        win, win_amount, result_text = await play_number_guess(message.from_user.id, bet, guess)
         
         if win:
-            db.update_user_balance(message.from_user.id, win_amount)
+            update_balance(message.from_user.id, win_amount)
         
         await message.answer(
             f"🔢 **РЕЗУЛЬТАТ** 🔢\n\n{result_text}\n\n"
-            f"💵 Новый баланс: {db.get_user_balance(message.from_user.id)} {get_currency_name()}",
+            f"💵 Новый баланс: {get_user_balance(message.from_user.id)} {get_currency_name()}",
             parse_mode="Markdown",
             reply_markup=games_keyboard()
         )
@@ -919,8 +935,8 @@ async def game_number_play(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data == "game_blackjack")
 async def game_blackjack_start(callback: CallbackQuery, state: FSMContext):
-    min_bet = float(db.get_setting('casino_min_bet'))
-    max_bet = float(db.get_setting('casino_max_bet'))
+    min_bet = float(get_setting('casino_min_bet'))
+    max_bet = float(get_setting('casino_max_bet'))
     
     await callback.message.edit_caption(
         caption=f"🃏 **БЛЭКДЖЕК** 🃏\n\n"
@@ -939,21 +955,22 @@ async def game_blackjack_start(callback: CallbackQuery, state: FSMContext):
 async def game_blackjack_bet(message: types.Message, state: FSMContext):
     try:
         bet = float(message.text)
-        min_bet = float(db.get_setting('casino_min_bet'))
-        max_bet = float(db.get_setting('casino_max_bet'))
+        min_bet = float(get_setting('casino_min_bet'))
+        max_bet = float(get_setting('casino_max_bet'))
         
         if bet < min_bet or bet > max_bet:
             await message.answer(f"❌ Ставка должна быть от {min_bet:.0f} до {max_bet:.0f} {get_currency_name()}")
             return
         
-        balance = db.get_user_balance(message.from_user.id)
+        balance = get_user_balance(message.from_user.id)
         if balance < bet:
             await message.answer(f"❌ Недостаточно средств! Ваш баланс: {balance} {get_currency_name()}")
             return
         
-        db.update_user_balance(message.from_user.id, -bet)
+        update_balance(message.from_user.id, -bet)
         
-        win, win_amount, result_text, player_cards, dealer_cards = await play_blackjack(bet)
+        result = await play_blackjack(message.from_user.id, bet)
+        win, win_amount, result_text, player_cards, dealer_cards = result
         
         await state.update_data(blackjack_bet=bet, player_cards=player_cards, dealer_cards=dealer_cards)
         
@@ -976,7 +993,8 @@ async def game_blackjack_action(callback: CallbackQuery, state: FSMContext):
     
     action = "hit" if callback.data == "bj_hit" else "stand"
     
-    win, win_amount, result_text, new_player_cards, new_dealer_cards = await play_blackjack(bet, action, player_cards, dealer_cards)
+    result = await play_blackjack(callback.from_user.id, bet, action, player_cards, dealer_cards)
+    win, win_amount, result_text, new_player_cards, new_dealer_cards = result
     
     if win is None:
         await state.update_data(player_cards=new_player_cards, dealer_cards=new_dealer_cards)
@@ -987,11 +1005,11 @@ async def game_blackjack_action(callback: CallbackQuery, state: FSMContext):
         )
     else:
         if win and win_amount > 0:
-            db.update_user_balance(callback.from_user.id, win_amount)
+            update_balance(callback.from_user.id, win_amount)
         
         await callback.message.edit_caption(
             caption=f"🃏 **РЕЗУЛЬТАТ** 🃏\n\n{result_text}\n\n"
-                    f"💵 Новый баланс: {db.get_user_balance(callback.from_user.id)} {get_currency_name()}",
+                    f"💵 Новый баланс: {get_user_balance(callback.from_user.id)} {get_currency_name()}",
             parse_mode="Markdown",
             reply_markup=games_keyboard()
         )
@@ -1025,42 +1043,44 @@ async def open_case_handler(callback: CallbackQuery):
         await callback.answer("❌ Вы не подписаны на каналы!", show_alert=True)
         return
     
-    case_id = callback.data.split("_")[1]
-    case_data = db.get_case(int(case_id))
+    case_id = int(callback.data.split("_")[1])
+    case = db.get_case(case_id)
     
-    if not case_data or not case_data.get('is_active', True):
+    if not case or case.get('is_active', 1) != 1:
         await callback.answer("❌ Кейс не найден!", show_alert=True)
         return
     
-    case_name = case_data['name']
-    price = case_data['price']
-    photo_url = case_data.get('photo_url', '')
-    items = case_data.get('items', [])
+    case_name = case['name']
+    price = case['price']
+    photo_url = case.get('photo_url', '')
     
-    balance = db.get_user_balance(callback.from_user.id)
+    balance = get_user_balance(callback.from_user.id)
     if balance < price:
         await callback.answer(f"❌ Недостаточно средств! Нужно {price:.0f} {get_currency_name()}", show_alert=True)
         return
     
-    db.update_user_balance(callback.from_user.id, -price)
+    update_balance(callback.from_user.id, -price)
     
-    if not items:
-        db.update_user_balance(callback.from_user.id, price)
+    items = db.get_case_items(case_id)
+    items_list = items
+    
+    if not items_list:
+        update_balance(callback.from_user.id, price)
         await callback.answer("❌ В кейсе нет предметов!", show_alert=True)
         return
     
-    selected_item, result_text = await open_case_animation(callback.message, case_name, items)
+    selected_item, result_text = await open_case_animation(callback, case_id, case_name, items_list)
     
-    db.add_to_inventory(
-        callback.from_user.id,
-        selected_item['item_name'],
+    add_to_inventory(
+        callback.from_user.id, 
+        selected_item['item_name'], 
         selected_item['item_value'],
         selected_item['emoji'],
         selected_item['rarity'],
         case_name
     )
     
-    db.update_user_stats(callback.from_user.id, spent=price, opened=1)
+    db.update_user_stats(callback.from_user.id, price, 1)
     
     if photo_url:
         await callback.message.edit_media(
@@ -1084,7 +1104,7 @@ async def bonus_case_handler(callback: CallbackQuery):
     
     last_time = db.get_last_bonus_time(callback.from_user.id)
     now = int(datetime.now().timestamp())
-    cooldown = int(db.get_setting('bonus_case_cooldown'))
+    cooldown = int(get_setting('bonus_case_cooldown'))
     
     if now - last_time < cooldown:
         hours_left = (cooldown - (now - last_time)) // 3600
@@ -1101,7 +1121,7 @@ async def bonus_case_handler(callback: CallbackQuery):
     ]
     
     item_name, item_value, emoji, rarity = random.choice(bonus_items)
-    db.add_to_inventory(callback.from_user.id, item_name, item_value, emoji, rarity, "Бонусный кейс")
+    add_to_inventory(callback.from_user.id, item_name, item_value, emoji, rarity, "Бонусный кейс")
     db.update_bonus_time(callback.from_user.id)
     
     await callback.answer(f"🎁 Бонус получен!", show_alert=True)
@@ -1161,25 +1181,28 @@ async def show_resell(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "sell_all")
 async def sell_all_items(callback: CallbackQuery):
-    total = db.sell_all_items(callback.from_user.id)
+    items = db.get_all_user_items(callback.from_user.id)
     
-    if total == 0:
+    if not items:
         await callback.answer("❌ Нет предметов для продажи!", show_alert=True)
         return
+    
+    total = db.sell_all_items(callback.from_user.id)
+    update_balance(callback.from_user.id, total)
     
     await callback.answer(f"✅ Продано на {total:.0f} {get_currency_name()}!", show_alert=True)
     await callback.message.edit_caption(
         caption=f"✅ **ПРОДАЖА ЗАВЕРШЕНА**\n\n"
                 f"💰 Выручено: {total:.0f} {get_currency_name()}\n"
-                f"💵 Новый баланс: {db.get_user_balance(callback.from_user.id)} {get_currency_name()}",
+                f"💵 Новый баланс: {get_user_balance(callback.from_user.id)} {get_currency_name()}",
         parse_mode="Markdown",
         reply_markup=main_keyboard(callback.from_user.id)
     )
 
 @dp.callback_query(F.data == "show_shop")
 async def show_shop(callback: CallbackQuery):
-    payment_card = db.get_setting('payment_card')
-    payment_phone = db.get_setting('payment_phone')
+    payment_card = get_setting('payment_card')
+    payment_phone = get_setting('payment_phone')
     
     text = "🏪 **МАГАЗИН** 🏪\n\n"
     text += "💳 **Способы пополнения:**\n"
@@ -1189,7 +1212,7 @@ async def show_shop(callback: CallbackQuery):
         text += f"📱 Телефон: `{payment_phone}`\n"
     
     text += "\nПосле оплаты отправьте скриншот в поддержку\n"
-    text += f"🆘 Поддержка: {db.get_setting('support_contact')}"
+    text += f"🆘 Поддержка: {get_setting('support_contact')}"
     
     await callback.message.edit_caption(
         caption=text,
@@ -1203,7 +1226,7 @@ async def show_shop(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "support")
 async def support(callback: CallbackQuery):
-    support_contact = db.get_setting('support_contact')
+    support_contact = get_setting('support_contact')
     await callback.message.edit_caption(
         caption=f"🆘 **ПОДДЕРЖКА** 🆘\n\n"
                 f"По всем вопросам обращайтесь:\n"
@@ -1300,12 +1323,7 @@ async def create_case_desc(message: types.Message, state: FSMContext):
     await state.update_data(case_desc=message.text)
     data = await state.get_data()
     
-    case_id = db.create_case(
-        data['case_name'],
-        data['case_price'],
-        data['case_photo'],
-        data['case_desc']
-    )
+    case_id = db.add_case(data['case_name'], data['case_price'], data['case_photo'], data['case_desc'])
     
     await state.update_data(current_case_id=case_id)
     await message.answer(
@@ -1402,15 +1420,15 @@ async def admin_list_cases(callback: CallbackQuery):
         await callback.answer("❌ Нет доступа!", show_alert=True)
         return
     
-    cases = db.get_all_cases()
+    cases = db.get_cases()
     
     if not cases:
         await callback.answer("Нет созданных кейсов!", show_alert=True)
         return
     
     text = "📋 **СПИСОК КЕЙСОВ**\n\n"
-    for case_id, case_data in cases.items():
-        text += f"ID: {case_id} | {case_data['name']} - {case_data['price']} {get_currency_name()}\n"
+    for case in cases:
+        text += f"ID: {case['id']} | {case['name']} - {case['price']} {get_currency_name()}\n"
     
     await callback.message.edit_caption(
         caption=text,
@@ -1432,16 +1450,16 @@ async def admin_broadcast(callback: CallbackQuery, state: FSMContext):
 @dp.message(AdminStates.waiting_for_broadcast_text)
 async def send_broadcast(message: types.Message, state: FSMContext):
     text = message.text
-    users = db.users
+    users = db.get_users()
     
     success = 0
     fail = 0
     
     status_msg = await message.answer(f"📢 Начинаю рассылку для {len(users)} пользователей...")
     
-    for user_id_str, user_data in users.items():
+    for user_id in users:
         try:
-            await bot.send_message(int(user_id_str), text, parse_mode="Markdown")
+            await bot.send_message(int(user_id), text, parse_mode="Markdown")
             success += 1
             await asyncio.sleep(0.05)
         except:
@@ -1514,7 +1532,7 @@ async def admin_balance_users(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ Нет доступа!", show_alert=True)
         return
     
-    await callback.message.answer("💰 Введите ID пользователя и сумму через пробел:\nПример: 5356400377 1000")
+    await callback.message.answer("💰 Введите ID пользователя и сумму через пробел:\nПример: 123456789 1000")
     await state.set_state(AdminStates.waiting_for_add_balance)
     await callback.answer()
 
@@ -1525,7 +1543,7 @@ async def add_balance_admin(message: types.Message, state: FSMContext):
         user_id = int(parts[0])
         amount = float(parts[1])
         
-        db.update_user_balance(user_id, amount)
+        update_balance(user_id, amount)
         
         await message.answer(f"✅ Пользователю {user_id} добавлено {amount:.0f} {get_currency_name()}!")
         
@@ -1544,20 +1562,13 @@ async def admin_games(callback: CallbackQuery):
         await callback.answer("❌ Нет доступа!", show_alert=True)
         return
     
-    current_min = db.get_setting('casino_min_bet')
-    current_max = db.get_setting('casino_max_bet')
-    
     await callback.message.answer(
-        f"🎮 **НАСТРОЙКА ИГР** 🎮\n\n"
-        f"Текущие лимиты:\n"
-        f"💰 Мин. ставка: {current_min} {get_currency_name()}\n"
-        f"💰 Макс. ставка: {current_max} {get_currency_name()}\n\n"
-        f"Введите новую минимальную и максимальную ставку через пробел:\n"
-        f"Пример: 10 1000"
+        "🎮 **НАСТРОЙКА ИГР** 🎮\n\n"
+        "Введите минимальную и максимальную ставку через пробел:\n"
+        "Пример: 10 1000"
     )
-    await callback.answer()
     
-    @dp.message(lambda m: m.text and not m.text.startswith('/'))
+    @dp.message(lambda m: m.text and m.text.replace(' ', '').replace('.', '').isdigit() or ' ' in m.text)
     async def set_game_limits(msg: types.Message):
         try:
             parts = msg.text.split()
@@ -1587,7 +1598,7 @@ async def admin_channels(callback: CallbackQuery):
     
     if channels:
         for channel in channels:
-            text += f"• {channel['channel_name']} ({channel['channel_id']})\n"
+            text += f"• {channel['channel_name']}\n"
     else:
         text += "Нет обязательных подписок"
     
@@ -1629,14 +1640,18 @@ async def admin_stats(callback: CallbackQuery):
         await callback.answer("❌ Нет доступа!", show_alert=True)
         return
     
-    stats = db.get_stats()
+    total_users = db.get_total_users()
+    total_spent = db.get_total_spent()
+    total_opened = db.get_total_opened()
+    total_items = db.get_total_items()
+    total_balance = db.get_total_balance()
     
     text = f"📊 **СТАТИСТИКА БОТА** 📊\n\n"
-    text += f"👥 Пользователей: {stats['total_users']}\n"
-    text += f"💰 Всего потрачено: {stats['total_spent']:.0f} {get_currency_name()}\n"
-    text += f"🎁 Открыто кейсов: {stats['total_opened']}\n"
-    text += f"📦 Предметов в инвентаре: {stats['total_items']}\n"
-    text += f"💎 Баланс пользователей: {stats['total_balance']:.0f} {get_currency_name()}"
+    text += f"👥 Пользователей: {total_users}\n"
+    text += f"💰 Всего потрачено: {total_spent:.0f} {get_currency_name()}\n"
+    text += f"🎁 Открыто кейсов: {total_opened}\n"
+    text += f"📦 Предметов в инвентаре: {total_items}\n"
+    text += f"💎 Баланс пользователей: {total_balance:.0f} {get_currency_name()}"
     
     await callback.message.edit_caption(
         caption=text,
@@ -1647,11 +1662,13 @@ async def admin_stats(callback: CallbackQuery):
 
 # ========== ЗАПУСК ==========
 async def main():
+    print("=" * 50)
     print("🤖 БОТ ЗАПУЩЕН!")
     print(f"👑 Администраторы: {ADMIN_IDS}")
     print("🎮 5 игр доступно: Слоты, Кости, КНБ, Угадай число, Блэкджек")
-    print("🎁 Система кейсов активна")
-    print("💾 Данные хранятся в папке 'bot_data' (JSON файлы)")
+    print("🎁 Система кейсов с анимацией")
+    print("💾 Данные хранятся в JSON файле")
+    print("=" * 50)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
